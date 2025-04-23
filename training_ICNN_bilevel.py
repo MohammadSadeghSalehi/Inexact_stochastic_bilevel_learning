@@ -75,16 +75,16 @@ transform = Compose(
 train_dataset = get_dataset("BSDS500_gray", test=False, transform=transform)
 val_dataset = get_dataset("BSDS500_gray", test=False, transform=CenterCrop((256)))
 # splitting in training and validation set
-test_ratio = 0.05
-test_len = int(len(train_dataset) * test_ratio)
+test_len = int(16)
 train_len = len(train_dataset) - test_len
 train_set = torch.utils.data.Subset(train_dataset, range(train_len))
 val_set = torch.utils.data.Subset(val_dataset, range(train_len, len(train_dataset)))
 
 print(f"test size: {test_len}, train size: {train_len}")
 # create dataloaders
+sampler = torch.utils.data.RandomSampler(train_set, replacement=True)
 train_dataloader = torch.utils.data.DataLoader(
-    train_set, batch_size=8, shuffle=True, drop_last=True, num_workers=0
+    train_set, batch_size=8, sampler=sampler, drop_last=True, num_workers=0
 )
 val_dataloader = torch.utils.data.DataLoader(
     val_set, batch_size=4, shuffle=False, drop_last=True, num_workers=0
