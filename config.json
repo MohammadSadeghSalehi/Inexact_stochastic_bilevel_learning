@@ -1,0 +1,55 @@
+{
+  "experiment": {
+    "problem": "denoising",
+    "training_mode": "ISGD",
+    "seed": 23
+  },
+  "model": {
+    "regularizer_type": "ICNN",
+    "channels": 3,
+    "foe_filters": 30,
+    "foe_kernel_size": 3,
+    "icnn_filters": 10,
+    "icnn_layers": 2,
+    "icnn_strong_convexity": 0.0,
+    "learnable_smoothing": true,
+    "learnable_weights": true,
+    "blur_kernel_size": 7,
+    "blur_sigma": 3.0,
+    "blur_channels": 3
+  },
+  "data": {
+    "dataset_name": "BSDS500",
+    "pytorch_dataset": true,
+    "img_size_x": 32,
+    "img_size_y": 32,
+    "noise_level": 25,
+    "train_size": 128,
+    "test_size": 8,
+    "test_start_index": 0,
+    "batch_size": 8,
+    "viz_index_isgd": 0,
+    "viz_index_maid": 998
+  },
+  "optimizer": {
+    "type": "SGD",
+    "bilevel_optimizer_type": "SGD",
+    "alpha": 1e-1,
+    "eps0": 1e-3,
+    "cg_tol": 1e-3,
+    "lower_tol_decay_p": 0.0,
+    "lr_decay_q": 0.5,
+    "decay_setting": "poly-poly",
+    "warm_start": true,
+    "hypergrad_verbose": false
+  },
+  "training": {
+    "epochs": 10000,
+    "budget": 1e4,
+    "device": "mps"
+  },
+  "logging": {
+    "log_dir": "Logs",
+    "checkpoint_costs": [1e5, 1.95e5, 3e5, 4e5, 4.95e5]
+  }
+}
