@@ -87,7 +87,7 @@ train_dataloader = torch.utils.data.DataLoader(
     train_set, batch_size=8, sampler=sampler, drop_last=True, num_workers=0
 )
 val_dataloader = torch.utils.data.DataLoader(
-    val_set, batch_size=4, shuffle=False, drop_last=True, num_workers=0
+    val_set, batch_size=12, shuffle=False, drop_last=True, num_workers=0
 )
 
 # define regularizer

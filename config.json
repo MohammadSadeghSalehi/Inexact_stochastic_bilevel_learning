@@ -50,6 +50,6 @@
   },
   "logging": {
     "log_dir": "Logs",
-    "checkpoint_costs": [1e5, 1.95e5, 3e5, 4e5, 4.95e5]
+    "checkpoint_costs": [1e2, 2e2, 5e2, 1e3, 2e3, 5e3, 1e4]
   }
 }

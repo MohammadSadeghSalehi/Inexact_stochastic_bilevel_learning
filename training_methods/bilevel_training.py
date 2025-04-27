@@ -11,6 +11,8 @@ import json
 import argparse
 from minres import *
 import random
+import matplotlib.pyplot as plt
+
 
 # set random seed
 torch.manual_seed(0)
@@ -35,6 +37,11 @@ except json.JSONDecodeError:
         print(f"Error: Could not decode JSON from {args.config}")
         sys.exit(1)
 
+# visual checkpoints  on training and test
+checkpoint_train = config["logging"]["checkpoint_costs"]
+checkpoint_flag = [False] * len(checkpoint_train)
+visual_train = []
+visual_val = []
 logs_dict = {
     "loss_batch": [],
     "loss_epoch": [],
@@ -52,6 +59,12 @@ logs_dict = {
     "eps" : config["optimizer"]['eps0'],
     "psnr_test": [],
     "loss_test": [],   
+}
+
+logs_dict_visual = {
+    "train": None,
+    "val": None,
+    "cost": [],
 }
 
 budget = config["training"]["budget"]
@@ -163,20 +176,29 @@ def bilevel_training(
     
     loss_test_init = 0
     psnr_test_init = 0
-    for gt in train_dataloader:
+    for batch, gt in enumerate(train_dataloader):
         noisy = physics(gt)
         loss_fn = lambda x_in: upper_loss(gt, x_in).mean()
         loss_init += loss_fn(noisy).item()
         psnr_init += psnr(noisy, gt).mean().item()
+        if batch == 0:
+            fixed_train_batch = noisy
+            fixed_train_batch_clean = gt
+    visual_train.append(fixed_train_batch_clean.cpu().detach().numpy())
+    visual_train.append(fixed_train_batch.cpu().detach().numpy())
+
     logs_dict["loss_epoch"].append(loss_init/len(train_dataloader))
     logs_dict["psnr_epoch"].append(psnr_init/len(train_dataloader))
     
-    for gt_test in val_dataloader:
+    for batch, gt_test in enumerate(val_dataloader):
         noisy = physics(gt_test)
         loss_fn = lambda x_in: upper_loss(gt_test, x_in).mean()
         loss_test_init += loss_fn(noisy).item()
         psnr_test_init += psnr(noisy, gt_test).mean().item()
-        
+        if batch == 0:
+            visual_val.append(gt_test.cpu().detach().numpy())
+            visual_val.append(noisy.cpu().detach().numpy())
+    
     logs_dict["loss_test"].append(loss_test_init / len(val_dataloader))
     logs_dict["psnr_test"].append(psnr_test_init / len(val_dataloader))
     budget_flag = False
@@ -243,7 +265,6 @@ def bilevel_training(
         logs_dict["loss_epoch"].append(loss_train[-1])
         logs_dict["psnr_epoch"].append(psnr_train[-1])
         print(f"[Epoch {epoch+1}] Train Loss: {mean_train_loss:.2E}, PSNR: {mean_train_psnr:.2f}")
-
         # ---- Validation ----
         regularizer.eval()
         with torch.no_grad():
@@ -270,7 +291,6 @@ def bilevel_training(
             logs_dict["psnr_test"].append(psnr_val[-1])
 
             print(f"[Epoch {epoch+1}] Val Loss: {mean_val_loss:.2E}, PSNR: {mean_val_psnr:.2f}")
-
             # ---- Save best regularizer based on validation PSNR ----
             if mean_val_psnr > best_val_psnr:
                 best_val_psnr = mean_val_psnr
@@ -279,7 +299,25 @@ def bilevel_training(
         q = config["optimizer"]['lr_decay_q']
         eps = config["optimizer"]['eps0']
         alpha = config["optimizer"]['alpha']
-        torch.save(logs_dict, os.path.join(directory, f"logs_{alpha}_{eps}_{p}_{q}_.pt"))
+        torch.save(logs_dict, os.path.join(directory +"/logs", f"logs_{alpha}_{eps}_{p}_{q}_.pt"))
+        
+        for idx, cost_threshold in enumerate(checkpoint_train):
+            if logs_dict["cost_epoch"][-1] >= cost_threshold and not checkpoint_flag[idx]:
+                cost_curr = logs_dict["cost_epoch"][-1]
+                print(f"\nCost checkpoint reached: {cost_curr:.2e} >= {cost_threshold:.2e}")
+                visual_fixed, _ = reconstruct_nmAPG(
+                        fixed_train_batch.to(device), physics, data_fidelity, regularizer, lmbd,
+                        NAG_step_size, NAG_max_iter, NAG_tol_train,
+                        verbose=verbose, x_init=fixed_train_batch.to(device),
+                    )
+                visual_train.append(visual_fixed.detach().cpu().numpy())
+                visual_val.append(x_recon_val.cpu().numpy())
+                logs_dict_visual["train"] = visual_train
+                logs_dict_visual["val"] = visual_val
+                logs_dict_visual["cost"].append(cost_curr)
+                torch.save(logs_dict_visual, os.path.join(directory +"/vislogs", f"vis_logs_{alpha}_{eps}_{p}_{q}_.pt"))
+                checkpoint_flag[idx] = True
+                
         if logs_dict["cost_epoch"][-1] >= budget:
                 budget_flag = True
                 break
