@@ -10,7 +10,7 @@ def nmAPG(
     max_iter: int = 200,
     L_init: float = 1,
     tol: float = 1e-4,
-    rho: float = 0.9,
+    rho: float = 0.25,
     delta: float = 0.1,
     eta: float = 0.8,
     verbose: bool = False,
@@ -88,7 +88,7 @@ def nmAPG(
 
         # --- Inner Loop 1 (Find z via backtracking) ---
         energy_new = torch.zeros_like(energy) # Initialize
-        for ii in range(150):
+        for ii in range(10):
             z[idx] = x_bar[idx] - grad[idx] / L[idx]
             dx = z[idx] - x_bar[idx]
             # Ensure energy and c[idx] are broadcastable for torch.max
@@ -165,7 +165,7 @@ def nmAPG(
                 v = torch.zeros_like(x[idx_idx2]) # Initialize v for this subset
                 energy_new2 = torch.zeros_like(energy_new[idx2]) # Initialize energy for v
 
-                for ii in range(1500):
+                for ii in range(10):
                     v = x[idx_idx2] - gradx / L[idx_idx2]
                     dx_v = v - x[idx_idx2]
                     # Ensure c[idx_idx2] is shaped correctly
@@ -206,7 +206,7 @@ def nmAPG(
 
         # --- Calculate Residual ---
         res_val = torch.zeros_like(res[idx]) # Initialize residual for active elements
-        if i >= 0: # Calculate residual from the first iteration onwards
+        if i >= 1: # Calculate residual from the first iteration onwards
             try:
                 # Use current_x_old which stores x at the start of this iteration
                 dx_res = x[idx] - current_x_old[idx]

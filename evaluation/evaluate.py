@@ -1,6 +1,7 @@
 import numpy as np
 from torch.utils.data import DataLoader
 from .nmAPG import reconstruct_nmAPG
+from .NAG import reconstruct_NAG
 import torch
 from deepinv.loss.metric import PSNR
 

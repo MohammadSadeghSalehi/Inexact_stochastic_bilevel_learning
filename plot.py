@@ -6,8 +6,8 @@ import pickle
 import numpy as np
 
 # Directories
-LOGS_DIR = "logs/winner"
-PLOTS_DIR = "plots/winner"
+LOGS_DIR = "logs"
+PLOTS_DIR = "plots"
 
 # Create plots directory if it doesn't exist
 os.makedirs(PLOTS_DIR, exist_ok=True)
@@ -43,6 +43,7 @@ lower_costs_epoch = []
 avg_psnr = []
 avg_loss = []
 loss = []
+psnr_batch = []
 avg_loss_test = []
 avg_psnr_test = []
 cg_iter = []
@@ -52,6 +53,10 @@ epochs = []
 color = []
 linestyle = []
 HIGH_VALUE = 1e6
+
+r_avg_loss = []
+r_avg_psnr = []
+r_avg_lower_costs = []
 
 warm_colors = [
     'red', 'orange', 'darkred', 'salmon', 'coral', 'sienna', 'tomato', 'chocolate',
@@ -108,11 +113,19 @@ for filename in sorted_files:
         avg_psnr.append([-HIGH_VALUE if not np.isfinite(l) else l for l in log_data["psnr_epoch"]])
         avg_loss.append([HIGH_VALUE if not np.isfinite(l) else l for l in log_data["loss_epoch"]])
         loss.append([log_data["loss_batch"][0]] + [HIGH_VALUE if not np.isfinite(l) else l for l in log_data["loss_batch"]])
+        psnr_batch.append([log_data["psnr_batch"][0]] + [-HIGH_VALUE if not np.isfinite(l) else l for l in log_data["psnr_batch"]])
         lower_costs.append([0] + log_data["cost_batch"])
         avg_loss_test.append([HIGH_VALUE if not np.isfinite(l) else l for l in log_data["loss_test"]])
         avg_psnr_test.append([-HIGH_VALUE if not np.isfinite(l) else l for l in log_data["psnr_test"]])
         cg_iter.append(log_data["cg_batch"])
         lower_iter.append(log_data["lower_batch"])
+
+        # Compute running averages using convolution
+        window_size = 5 # Define the window size for the running average
+        r_avg_loss.append(np.convolve(loss[-1], np.ones(window_size) / window_size, mode='valid'))
+        r_avg_lower_costs.append(np.convolve(lower_costs[-1], np.ones(window_size) / window_size, mode='valid'))
+        r_avg_psnr.append(np.convolve(psnr_batch[-1], np.ones(window_size) / window_size, mode='valid'))
+        # Extract parameters
         print(f"{log_data['step']} {log_data['q']} {log_data['p']}")
         if log_data['q'] ==0 and log_data['p'] ==0:
             legend.append(
@@ -145,9 +158,13 @@ for filename in sorted_files:
             mixed_colors.pop(0)
 
 
-plot(lower_costs_epoch, avg_psnr, "Total lower-level computations", "PSNR", "Total Lower Costs vs Average PSNR per Epoch", "lower_psnr.png", "linear", "log", legend,xlim=[0,1e4], ylim=[15,30], color= color,linestyle = linestyle)
+plot(lower_costs_epoch, avg_psnr, "Total lower-level computations", "PSNR", "Total Lower Costs vs Average PSNR per Epoch", "lower_psnr.png", "linear", "linear", legend,xlim=[0,1e4], ylim=[15,30], color= color,linestyle = linestyle)
 plot(lower_costs_epoch, avg_loss, "Total lower-level computations", "Loss", "Total Lower Costs vs Average Loss per Epoch", "lower_loss.png", "symlog", "log", legend,xlim=[0,1e4], ylim=[2,120], color= color,linestyle = linestyle)
 plot(lower_costs, loss, "Total lower-level cost", "Loss", "Total Lower Costs vs Loss per batch", "lower_loss_iter.png", "symlog", "log", legend,xlim=[0,1e4], ylim=[2,120], color= color,linestyle = linestyle)
 plot(epochs, avg_loss_test, "Epoch", "Test Loss", "Epoch vs Average Test Loss per Epoch", "lower_loss_test.png", "linear", "linear", legend,xlim=[0,120], ylim=[50,1000], color= color,linestyle = linestyle)
 plot(epochs, avg_psnr_test, "Epoch", "Test PSNR", "Epoch vs Average Test PSNR per Epoch", "lower_psnr_test.png", "linear", "linear", legend,xlim=[0,120], ylim=[15,30], color= color,linestyle = linestyle)
+
+plot(r_avg_lower_costs, r_avg_psnr, "Total lower-level computations", "PSNR", "Total Lower Costs vs Average PSNR per Epoch", "lower_psnr_mv_average.png", "linear", "linear", legend,xlim=[0,1e4], ylim=[15,30], color= color,linestyle = linestyle)
+plot(r_avg_lower_costs, r_avg_loss, "Total lower-level computations", "Loss", "Total Lower Costs vs Average Loss per Epoch", "lower_loss_mv_average.png", "symlog", "log", legend,xlim=[0,1e4], ylim=[2,120], color= color,linestyle = linestyle)
+
 print(f"Plots saved to '{PLOTS_DIR}/'")

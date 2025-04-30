@@ -12,6 +12,7 @@ import json
 import argparse
 import random
 import sys, os
+import matplotlib.pyplot as plt
 
 from torchvision.transforms import (
     RandomCrop,
@@ -72,26 +73,26 @@ transform = Compose(
         RandomApply([RandomRotation((90, 90))], p=0.5),
     ]
 )
-train_dataset = get_dataset("BSDS500_gray", test=False, transform=transform)
-val_dataset = get_dataset("BSDS500_gray", test=False, transform=CenterCrop((256)))
+train_dataset = get_dataset("BSDS500", test=False, transform=transform)
+val_dataset = get_dataset("BSDS500", test=True, transform=CenterCrop((256)))
 # splitting in training and validation set
-test_len = int(16)
-train_len = len(train_dataset) - test_len
+test_len = int(10)
+train_len = len(train_dataset)
 train_set = torch.utils.data.Subset(train_dataset, range(train_len))
-val_set = torch.utils.data.Subset(val_dataset, range(train_len, len(train_dataset)))
+val_set = torch.utils.data.Subset(val_dataset, range(10, 10 + test_len))
 
 print(f"test size: {test_len}, train size: {train_len}")
 # create dataloaders
 sampler = torch.utils.data.RandomSampler(train_set, replacement=True)
 train_dataloader = torch.utils.data.DataLoader(
-    train_set, batch_size=8, sampler=sampler, drop_last=True, num_workers=0
+    train_set, batch_size=10, sampler=sampler, drop_last=True, num_workers=8
 )
 val_dataloader = torch.utils.data.DataLoader(
-    val_set, batch_size=12, shuffle=False, drop_last=True, num_workers=0
+    val_set, batch_size=10, shuffle=False, drop_last=True, num_workers=8
 )
 
 # define regularizer
-regularizer = ICNNPrior(in_channels=1,channels=32,device=device)
+regularizer = ICNNPrior(in_channels=3,channels=32,device=device)
 
 regularizer, loss_train, loss_val, psnr_train, psnr_val = bilevel_training(
     regularizer,
@@ -101,7 +102,7 @@ regularizer, loss_train, loss_val, psnr_train, psnr_val = bilevel_training(
     train_dataloader,
     val_dataloader,
     epochs=config["training"]['epochs'],
-    NAG_step_size=1e-1,
+    NAG_step_size=config["optimizer"]['eps0'],
     NAG_max_iter=300,
     NAG_tol_train=config["optimizer"]['eps0'],
     NAG_tol_val=1e-6,
