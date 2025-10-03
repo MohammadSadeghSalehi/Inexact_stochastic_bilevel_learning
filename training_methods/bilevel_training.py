@@ -2,8 +2,9 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from deepinv.loss.metric import PSNR
+import deepinv
 # from deepinv.optim.utils import minres
-from evaluation import reconstruct_nmAPG
+from evaluation import reconstruct_nmAPG, reconstruct_nmAPG_stable
 import copy
 import os
 import sys
@@ -14,10 +15,47 @@ import random
 import matplotlib.pyplot as plt
 
 
+# Truncated AdaGrad optimizer
+class TruncatedAdaGrad(torch.optim.Optimizer):
+    def __init__(self, params, lr=1e-2, window_size=10, eps=1e-8):
+        defaults = dict(lr=lr, window_size=window_size, eps=eps)
+        super().__init__(params, defaults)
+
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            loss = closure()
+
+        for group in self.param_groups:
+            lr = group['lr']
+            eps = group['eps']
+            window_size = group['window_size']
+
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+                grad = p.grad.data
+
+                state = self.state[p]
+                if 'grad_sq_window' not in state:
+                    state['grad_sq_window'] = []
+                    state['step'] = 0
+
+                grad_sq_window = state['grad_sq_window']
+                grad_sq_window.append(grad.pow(2).clone())
+                if len(grad_sq_window) > window_size:
+                    grad_sq_window.pop(0)
+
+                avg_grad_sq = torch.stack(grad_sq_window).mean(dim=0)
+                std = avg_grad_sq.sqrt().add_(eps)
+                p.data.addcdiv_(-lr, grad, std)
+                state['step'] += 1
+
+        return loss
 # set random seed
-torch.manual_seed(0)
-random.seed(0)
-np.random.seed(0)
+# torch.manual_seed(0)
+# random.seed(0)
+# np.random.seed(0)
 
 directory = os.getcwd()
 parser = argparse.ArgumentParser(description="Bilevel Optimization Training Script")
@@ -38,47 +76,36 @@ except json.JSONDecodeError:
         sys.exit(1)
 
 # visual checkpoints  on training and test
-checkpoint_train = config["logging"]["checkpoint_costs"]
-checkpoint_flag = [False] * len(checkpoint_train)
-visual_train = []
-visual_val = []
-logs_dict = {
-    "loss_batch": [],
-    "loss_epoch": [],
-    "psnr_batch": [],
-    "psnr_epoch": [],
-    "cost_batch": [],
-    "cost_epoch": [],
-    "cg_batch": [],
-    "cg_epoch": [],
-    'lower_batch' : [],
-    "lower_epoch": [],
-    "p": config["optimizer"]['lower_tol_decay_p'],
-    "q": config["optimizer"]['lr_decay_q'],
-    "step": config["optimizer"]['alpha'],
-    "eps" : config["optimizer"]['eps0'],
-    "psnr_test": [],
-    "loss_test": [],   
-}
+global CHECKPOINT_FLAG
+global visual_train
+CHECKPOINT_TRAIN = config["logging"]["checkpoint_costs"]
+CHECKPOINT_FLAG = [False] * len(CHECKPOINT_TRAIN)
+
+
 
 logs_dict_visual = {
     "train": None,
     "val": None,
     "cost": [],
 }
+logs_state_dict = {
+    "weights": [],
+}
+
+print(f"config lr decay: {config['optimizer']["lr_decay_q"]}, lower tol decay: {config['optimizer']["lower_tol_decay_p"]}, alpha: {config['optimizer']["alpha"]}, eps0: {config['optimizer']["eps0"]}")
 
 budget = config["training"]["budget"]
 def total_iter(batch, epoch, n_batches):
     return batch + epoch * n_batches
 # Manual Schedules for accuracy and step size
-def _update_lr_tol(optimizer, current_total_iter, opt_config):
+def _update_lr_tol(optimizer, current_total_iter, opt_config, alpha0, eps0, minres0, p, q):
     """Updates learning rate and tolerance based on decay settings."""
     setting = opt_config["optimizer"]['decay_setting']
-    alpha0 = opt_config["optimizer"]['alpha']
-    eps0 = opt_config["optimizer"]['eps0']
-    cg_tol0 = opt_config["optimizer"]['cg_tol'] # Base CG tolerance
-    p = opt_config["optimizer"]['lower_tol_decay_p']
-    q = opt_config["optimizer"]['lr_decay_q']
+    # alpha0 = opt_config["optimizer"]['alpha']
+    # eps0 = opt_config["optimizer"]['eps0']
+    cg_tol0 = minres0
+    # p = opt_config["optimizer"]['lower_tol_decay_p']
+    # q = opt_config["optimizer"]['lr_decay_q']
     k = float(current_total_iter) # Use float for calculations
 
     new_lr = alpha0
@@ -139,8 +166,13 @@ def bilevel_training(
     device="cuda" if torch.cuda.is_available() else "mps",
     verbose=False,
     upper_loss=lambda x, y: torch.sum(((x - y) ** 2).view(x.shape[0], -1), -1),
+    p_val = 0.0,
+    q_val= 0.0,
 ):
-
+    upper_loss= lambda x, y: torch.sum(((x - y) ** 2).view(x.shape[0], -1), -1)
+    global CHECKPOINT_FLAG
+    visual_train = []
+    visual_val = []
     def hessian_vector_product(x, v, data_fidelity, y, regularizer, lmbd, physics):
         x = x.requires_grad_(True)
         grad = data_fidelity.grad(x, y, physics) + lmbd * regularizer.grad(x)
@@ -154,11 +186,30 @@ def bilevel_training(
             dot = torch.dot(grad_lower_level(x).view(-1), v.view(-1))
             param.grad = -torch.autograd.grad(dot, param, create_graph=False)[0].detach()
         return regularizer
-    lr = config["optimizer"]['alpha']
+    
     optimizer = torch.optim.SGD(regularizer.parameters(), lr=lr)
     # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=lr_decay)
     psnr = PSNR()
-
+    logs_dict = {
+    "loss_batch": [],
+    "loss_epoch": [],
+    "psnr_batch": [],
+    "psnr_epoch": [],
+    "cost_batch": [],
+    "cost_epoch": [],
+    "cg_batch": [],
+    "cg_epoch": [],
+    'lower_batch' : [],
+    "lower_epoch": [],
+    "grad_norm": [],
+    "p": p_val,
+    "q": q_val,
+    "step": [lr],
+    "eps" : [NAG_tol_train],
+    "psnr_test": [],
+    "loss_test": [],
+    "cost_test": [],  
+    }
     loss_train = []
     loss_val = []
     psnr_train = []
@@ -173,14 +224,22 @@ def bilevel_training(
     logs_dict["cost_epoch"].append(0)
     loss_init = 0
     psnr_init = 0
-    
+    eps0 = NAG_tol_train
+    minres0 = minres_tol
+    lr0 = lr
     loss_test_init = 0
     psnr_test_init = 0
     for batch, gt in enumerate(train_dataloader):
-        noisy = physics(gt)
-        loss_fn = lambda x_in: upper_loss(gt, x_in).mean()
-        loss_init += loss_fn(noisy).item()
-        psnr_init += psnr(noisy, gt).mean().item()
+        noisy = physics(gt.to(device))
+        # noisy_img = noisy[0].cpu().permute(1, 2, 0).detach().numpy()
+        # gt_img = gt[0].cpu().permute(1, 2, 0).detach().numpy()
+        noisy_img = noisy[0][0].cpu().detach().numpy()
+        gt_img = gt[0][0].cpu().detach().numpy()
+        plt.imsave(os.path.join(directory, "noisy_init.png"), noisy_img.clip(0, 1))
+        plt.imsave(os.path.join(directory, "gt_init.png"), gt_img.clip(0, 1))
+        loss_fn = lambda x_in: upper_loss(gt.to(device), x_in).mean()
+        loss_init += loss_fn((physics.A_dagger(noisy))).item()
+        psnr_init += psnr(physics.A_dagger(noisy), gt.to(device)).mean().item()
         if batch == 0:
             fixed_train_batch = noisy
             fixed_train_batch_clean = gt
@@ -189,18 +248,19 @@ def bilevel_training(
 
     logs_dict["loss_epoch"].append(loss_init/len(train_dataloader))
     logs_dict["psnr_epoch"].append(psnr_init/len(train_dataloader))
-    
+    print("psnr ", logs_dict["psnr_epoch"][-1])
     for batch, gt_test in enumerate(val_dataloader):
-        noisy = physics(gt_test)
-        loss_fn = lambda x_in: upper_loss(gt_test, x_in).mean()
-        loss_test_init += loss_fn(noisy).item()
-        psnr_test_init += psnr(noisy, gt_test).mean().item()
-        if batch == 0:
-            visual_val.append(gt_test.cpu().detach().numpy())
-            visual_val.append(noisy.cpu().detach().numpy())
+        noisy = physics(gt_test.to(device))
+        loss_fn = lambda x_in: upper_loss(gt_test.to(device), x_in).mean()
+        loss_test_init += loss_fn(physics.A_dagger(noisy)).item()
+        psnr_test_init += psnr(physics.A_dagger(noisy), gt_test.to(device)).mean().item()
+
+    visual_val.append(gt_test.cpu().detach().numpy())
+    visual_val.append(noisy.cpu().detach().numpy())
     
     logs_dict["loss_test"].append(loss_test_init / len(val_dataloader))
     logs_dict["psnr_test"].append(psnr_test_init / len(val_dataloader))
+    logs_dict["cost_test"].append(0)
     budget_flag = False
     for epoch in range(1, epochs):
         loss_epoch = []
@@ -213,22 +273,24 @@ def bilevel_training(
         for x in tqdm(train_dataloader, desc=f"Epoch {epoch}/{epochs} - Train"):
             batch_idx +=1
             iterations = total_iter(batch_idx, epoch-1, len(train_dataloader))
-            lr, NAG_tol_train, minres_tol, optimizer = _update_lr_tol(optimizer,iterations, config)
+            lr, NAG_tol_train, minres_tol, optimizer = _update_lr_tol(optimizer,iterations, config, lr0, eps0, minres0, p_val, q_val)
+            logs_dict["step"].append(lr)
+            logs_dict["eps"].append(NAG_tol_train)
             x = x.to(device).to(torch.float32)
             y = physics(x)
-            x_init = y
+            x_init = physics.A_dagger(y)
 
-            x_recon, iterations_lower = reconstruct_nmAPG(
+            x_recon, iterations_lower = reconstruct_nmAPG_stable(
                 y, physics, data_fidelity, regularizer, lmbd,
                 NAG_step_size, NAG_max_iter, NAG_tol_train,
-                verbose=verbose, x_init=x_init,
+                verbose=verbose,
             )
             total_lower += iterations_lower
             logs_dict["lower_batch"].append(total_lower)
             optimizer.zero_grad()
             loss_fn = lambda x_in: upper_loss(x, x_in).mean()
-            train_loss_epoch += loss_fn(x_recon).item()
-            train_psnr_epoch += psnr(x_recon, x).mean().item()
+            train_loss_epoch += loss_fn((x_recon)).item()
+            train_psnr_epoch += psnr((x_recon), x).mean().item()
             
             loss_epoch.append(loss_fn(x_recon).item())
             psnr_epoch.append(psnr(x_recon, x).mean().item())
@@ -236,7 +298,6 @@ def bilevel_training(
             logs_dict["psnr_batch"].append(psnr_epoch[-1])
             x_recon = x_recon.requires_grad_(True)
             grad_loss = torch.autograd.grad(loss_fn(x_recon), x_recon, create_graph=False)[0].detach()
-
             q, cg_iter = minres(
                 lambda input: hessian_vector_product(x_recon.detach(), input, data_fidelity, y, regularizer, lmbd, physics),
                 grad_loss, max_iter=minres_max_iter, tol=minres_tol,
@@ -249,7 +310,11 @@ def bilevel_training(
             for param, reg in zip(optimizer.param_groups[0]["params"], regularizer.parameters()):
                 if param.grad is not None:
                     param.grad = reg.grad
-
+                    
+            hypergrad_norm = torch.norm(torch.stack([torch.norm(p.grad) for p in regularizer.parameters() if p.grad is not None]))
+            logs_dict["grad_norm"].append(hypergrad_norm.item())
+            if verbose:
+                print(f"Hypergrad norm: {hypergrad_norm.item():.2E}, CG iterations: {cg_iter}, Lower iterations: {iterations_lower}")
             optimizer.step()
             
             
@@ -273,15 +338,23 @@ def bilevel_training(
             for x_val in tqdm(val_dataloader, desc=f"Epoch {epoch}/{epochs} - Val"):
                 x_val = x_val.to(device).to(torch.float32)
                 y_val = physics(x_val)
-
-                x_recon_val, _ = reconstruct_nmAPG(
+            
+                x_recon_val, _ = reconstruct_nmAPG_stable(
                     y_val, physics, data_fidelity, regularizer, lmbd,
                     NAG_step_size, NAG_max_iter, NAG_tol_val,
-                    verbose=verbose, x_init=y_val,
+                    verbose=verbose, x_init=(physics.A_dagger(y_val)),
                 )
 
                 val_loss_epoch += upper_loss(x_val, x_recon_val).mean().item()
                 val_psnr_epoch += psnr(x_recon_val, x_val).mean().item()
+                # val_sample = x_recon_val[0].cpu().permute(1, 2, 0).detach().numpy()
+                # gt_sample = x_val[0].cpu().permute(1, 2, 0).detach().numpy()
+                # noisy_sample = y_val[0].cpu().permute(1, 2, 0).detach().numpy()
+                val_sample = x_recon_val[0][0].cpu().detach().numpy()
+                gt_sample = x_val[0][0].cpu().detach().numpy()
+                plt.imsave(os.path.join(directory, f"val_recon_epoch.png"), val_sample)
+                plt.imsave(os.path.join(directory, f"val_gt_epoch.png"), gt_sample)
+                # plt.imsave(os.path.join(directory, f"val_noisy_epoch.png"), noisy_sample.clip(0, 1))
 
             mean_val_loss = val_loss_epoch / len(val_dataloader)
             mean_val_psnr = val_psnr_epoch / len(val_dataloader)
@@ -289,34 +362,34 @@ def bilevel_training(
             psnr_val.append(mean_val_psnr)
             logs_dict["loss_test"].append(loss_val[-1])
             logs_dict["psnr_test"].append(psnr_val[-1])
-
+            logs_dict["cost_test"].append(logs_dict["cost_epoch"][-1])
             print(f"[Epoch {epoch+1}] Val Loss: {mean_val_loss:.2E}, PSNR: {mean_val_psnr:.2f}")
             # ---- Save best regularizer based on validation PSNR ----
             if mean_val_psnr > best_val_psnr:
                 best_val_psnr = mean_val_psnr
                 best_regularizer_state = copy.deepcopy(regularizer.state_dict())
-        p = config["optimizer"]['lower_tol_decay_p']
-        q = config["optimizer"]['lr_decay_q']
-        eps = config["optimizer"]['eps0']
-        alpha = config["optimizer"]['alpha']
-        torch.save(logs_dict, os.path.join(directory +"/logs", f"logs_{alpha}_{eps}_{p}_{q}_.pt"))
+     
+
+        torch.save(logs_dict, os.path.join(directory +"/logs", f"logs_{lr0}_{eps0}_{p_val}_{q_val}_denoise.pt"))
         
-        for idx, cost_threshold in enumerate(checkpoint_train):
-            if logs_dict["cost_epoch"][-1] >= cost_threshold and not checkpoint_flag[idx]:
+        for idx, cost_threshold in enumerate(CHECKPOINT_TRAIN):
+            if logs_dict["cost_epoch"][-1] >= cost_threshold and not CHECKPOINT_FLAG[idx]:
                 cost_curr = logs_dict["cost_epoch"][-1]
                 print(f"\nCost checkpoint reached: {cost_curr:.2e} >= {cost_threshold:.2e}")
-                visual_fixed, _ = reconstruct_nmAPG(
+                visual_fixed, _ = reconstruct_nmAPG_stable(
                         fixed_train_batch.to(device), physics, data_fidelity, regularizer, lmbd,
                         NAG_step_size, NAG_max_iter, NAG_tol_train,
-                        verbose=verbose, x_init=fixed_train_batch.to(device),
+                        verbose=verbose,
                     )
                 visual_train.append(visual_fixed.detach().cpu().numpy())
                 visual_val.append(x_recon_val.cpu().numpy())
                 logs_dict_visual["train"] = visual_train
                 logs_dict_visual["val"] = visual_val
                 logs_dict_visual["cost"].append(cost_curr)
-                torch.save(logs_dict_visual, os.path.join(directory +"/vislogs", f"vis_logs_{alpha}_{eps}_{p}_{q}_.pt"))
-                checkpoint_flag[idx] = True
+                logs_state_dict["weights"].append(copy.deepcopy(regularizer.state_dict()))
+                torch.save(logs_dict_visual, os.path.join(directory +"/vislogs", f"vis_logs_{lr0}_{eps0}_{p_val}_{q_val}_denoise.pt"))
+                torch.save(logs_state_dict, os.path.join(directory +"/vislogs", f"vis_weights_{lr0}_{eps0}_{p_val}_{q_val}_denoise.pt"))
+                CHECKPOINT_FLAG[idx] = True
                 
         if logs_dict["cost_epoch"][-1] >= budget:
                 budget_flag = True
@@ -324,8 +397,15 @@ def bilevel_training(
         if budget_flag:
             print("Budget exceeded")
             break
+
+        # check if training loss is nan or inf
+        if not np.isfinite(loss_train[-1]) or not np.isfinite(loss_val[-1]):
+            print("Training loss is NaN or Inf. Stopping training.")
+            break
+
     # Load best regularizer
     regularizer.load_state_dict(best_regularizer_state)
+    CHECKPOINT_FLAG = [False] * len(CHECKPOINT_TRAIN)
 
     return regularizer, loss_train, loss_val, psnr_train, psnr_val
 

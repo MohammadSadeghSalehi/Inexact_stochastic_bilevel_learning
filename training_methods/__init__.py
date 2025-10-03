@@ -1,3 +1,4 @@
 from .simple_unrolling_training import simple_unrolling_training
 from .bilevel_training import bilevel_training
+from .bilevel_training_ISGD import bilevel_training_ISGD
 from .simple_bilevel_training_maid import simple_bilevel_training_maid
