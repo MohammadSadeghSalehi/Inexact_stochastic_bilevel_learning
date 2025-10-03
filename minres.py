@@ -3,7 +3,7 @@ import torch
 from tqdm import tqdm
 import torch.nn as nn
 from typing import Callable
-from deepinv.utils.tensorlist import TensorList
+from deepinv.utils import TensorList
 
 def dot(a, b, dim):
     if isinstance(a, TensorList):

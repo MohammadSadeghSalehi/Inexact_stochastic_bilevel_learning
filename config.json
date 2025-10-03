@@ -1,55 +1,63 @@
 {
-  "experiment": {
-    "problem": "denoising",
-    "training_mode": "ISGD",
-    "seed": 23
-  },
-  "model": {
-    "regularizer_type": "ICNN",
-    "channels": 3,
-    "foe_filters": 30,
-    "foe_kernel_size": 3,
-    "icnn_filters": 10,
-    "icnn_layers": 2,
-    "icnn_strong_convexity": 0.0,
-    "learnable_smoothing": true,
-    "learnable_weights": true,
-    "blur_kernel_size": 7,
-    "blur_sigma": 3.0,
-    "blur_channels": 3
-  },
-  "data": {
-    "dataset_name": "BSDS500",
-    "pytorch_dataset": true,
-    "img_size_x": 32,
-    "img_size_y": 32,
-    "noise_level": 25,
-    "train_size": 128,
-    "test_size": 8,
-    "test_start_index": 0,
-    "batch_size": 8,
-    "viz_index_isgd": 0,
-    "viz_index_maid": 998
-  },
-  "optimizer": {
-    "type": "SGD",
-    "bilevel_optimizer_type": "SGD",
-    "alpha": 1e-4,
-    "eps0": 1e-4,
-    "cg_tol": 1e-4,
-    "lower_tol_decay_p": 0.0,
-    "lr_decay_q": 0.0,
-    "decay_setting": "poly-poly",
-    "warm_start": true,
-    "hypergrad_verbose": false
-  },
-  "training": {
-    "epochs": 10000,
-    "budget": 1e4,
-    "device": "cuda"
-  },
-  "logging": {
-    "log_dir": "Logs",
-    "checkpoint_costs": [1e2, 2e2, 5e2, 1e3, 2e3, 5e3, 1e4]
-  }
+    "experiment": {
+        "problem": "denoising",
+        "training_mode": "ISGD",
+        "seed": 23
+    },
+    "model": {
+        "regularizer_type": "ICNN",
+        "channels": 3,
+        "foe_filters": 30,
+        "foe_kernel_size": 3,
+        "icnn_filters": 10,
+        "icnn_layers": 2,
+        "icnn_strong_convexity": 0.0,
+        "learnable_smoothing": true,
+        "learnable_weights": true,
+        "blur_kernel_size": 7,
+        "blur_sigma": 3.0,
+        "blur_channels": 3
+    },
+    "data": {
+        "dataset_name": "BSDS500",
+        "pytorch_dataset": true,
+        "img_size_x": 32,
+        "img_size_y": 32,
+        "noise_level": 25,
+        "train_size": 128,
+        "test_size": 8,
+        "test_start_index": 0,
+        "batch_size": 8,
+        "viz_index_isgd": 0,
+        "viz_index_maid": 998
+    },
+    "optimizer": {
+        "type": "SGD",
+        "bilevel_optimizer_type": "SGD",
+        "alpha": 0.001,
+        "eps0": 0.0001,
+        "cg_tol": 0.0001,
+        "lower_tol_decay_p": 0.0,
+        "lr_decay_q": 0.5,
+        "decay_setting": "poly-poly",
+        "warm_start": true,
+        "hypergrad_verbose": false
+    },
+    "training": {
+        "epochs": 2000,
+        "budget": 100000.0,
+        "device": "cuda"
+    },
+    "logging": {
+        "log_dir": "Logs",
+        "checkpoint_costs": [
+            1000.0,
+            2000.0,
+            5000.0,
+            10000.0,
+            25000.0,
+            50000.0,
+            100000.0
+        ]
+    }
 }
