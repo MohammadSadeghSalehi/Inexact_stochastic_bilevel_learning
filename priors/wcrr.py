@@ -41,10 +41,12 @@ class WCRR(Prior):
         )
         P.register_parametrization(self.filters[0], "weight", ZeroMean())
 
-        self.dirac = torch.zeros(
-            1, 1, 2 * self.filter_size - 1, 2 * self.filter_size - 1
+        in_c = nb_channels[0]
+        dirac = torch.zeros(
+            1, in_c, 2 * self.filter_size - 1, 2 * self.filter_size - 1
         )
-        self.dirac[0, 0, self.filter_size - 1, self.filter_size - 1] = 1.0
+        dirac[0, :, self.filter_size - 1, self.filter_size - 1] = 1.0
+        self.register_buffer("dirac", dirac, persistent=False)  # not in state_dict: old checkpoints stay loadable
 
         self.scaling = nn.Parameter(
             torch.log(torch.tensor(2.0) / sigma) * torch.ones(1, self.nb_filters, 1, 1)

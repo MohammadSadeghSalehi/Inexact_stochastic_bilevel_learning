@@ -26,14 +26,14 @@ def get_dataset(key, test=False, transform=None, root=None):
                 [ToImage(), ToDtype(torch.float32, scale=True), Grayscale(), transform]
             )
         return BSD68(transform=transforms)
-    # elif key == "BSDS500_color":
-    #     if transform is None:
-    #         transforms = Compose([ToImage(), ToDtype(torch.float32, scale=True)])
-    #     else:
-    #         transforms = Compose([ToImage(), ToDtype(torch.float32, scale=True), transform])
-    #     return BSDS500Dataset(
-    #         root="BSDS500", download=True, test=test, transform=transforms
-    #     )
+    elif key == "BSDS500_color":
+        if transform is None:
+            transforms = Compose([ToImage(), ToDtype(torch.float32, scale=True)])
+        else:
+            transforms = Compose([ToImage(), ToDtype(torch.float32, scale=True), transform])
+        return BSDS500Dataset(
+            root="BSDS500", download=True, test=test, transform=transforms
+        )
     # elif key == "fastMRI":
     #     if transform is None:
     #         transforms = Compose([ToImage(), ToDtype(torch.float32, scale=True)])

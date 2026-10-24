@@ -27,6 +27,9 @@ def minres(
     parallel_dim=0,
     verbose=False,
     precon=lambda x: x.clone(),
+    stall_patience=None,
+    info=None,
+    check_every=1,
 ):
     """
     Minimal Residual Method for solving symmetric equations.
@@ -110,6 +113,7 @@ def minres(
     search_update_norm = torch.zeros_like(solution_norm)
 
     # Perform iterations
+    best_step, stall_count = float("inf"), 0
     for i in range(int(max_iter)):
         # Perform matmul
         prod = A(qvec_prev1)
@@ -157,14 +161,28 @@ def minres(
         solution = solution + search_update
         ###########################################
 
-        # Check convergence criterion
-        search_update_norm = search_update.norm(2, dim=dim).unsqueeze(-1)
-        solution_norm = solution.norm(2, dim=dim).unsqueeze(-1)
-        if (search_update_norm / solution_norm).max().item() < tol:
-            if verbose:
-                print("MINRES converged at iteration", i)
-            flag = False
-            break
+        # Check convergence criterion (every `check_every` iterations: the .item() call forces a
+        # device synchronization, which dominates the cost of small problems on GPUs)
+        if (i + 1) % check_every == 0:
+            search_update_norm = search_update.norm(2, dim=dim).unsqueeze(-1)
+            solution_norm = solution.norm(2, dim=dim).unsqueeze(-1)
+            rel_step = (search_update_norm / solution_norm).max().item()
+            if stall_patience is not None:
+                # stop when the relative update has not improved for `stall_patience` iterations
+                # (precision floor of an inexact operator)
+                if rel_step < 0.99 * best_step:
+                    best_step, stall_count = rel_step, 0
+                else:
+                    stall_count += 1
+                    if stall_count >= stall_patience:
+                        if info is not None:
+                            info["stalled"] = True
+                        break
+            if rel_step < tol:
+                if verbose:
+                    print("MINRES converged at iteration", i)
+                flag = False
+                break
 
         # Update terms for next iteration
         # Lanczos terms

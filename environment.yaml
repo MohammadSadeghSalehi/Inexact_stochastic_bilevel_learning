@@ -1,12 +1,15 @@
-name: learnR
+name: isgd-tci
 channels:
   - defaults
 dependencies:
-  # basic programs
   - python=3.12
+  - pip
   - pip:
+    - torch==2.6.*
+    - torchvision==0.21.*
+    - deepinv==0.4.1
+    - scipy
     - numpy
     - matplotlib
-    - torch
-    - torchvision
-    - deepinv
+    - pillow
+    - tqdm

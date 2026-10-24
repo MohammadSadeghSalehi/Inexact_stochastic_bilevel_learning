@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+# macOS
+.DS_Store
+# data (BSDS500 is downloaded automatically by dataset/datasets.py)
+BSDS500/
+# run outputs
+weights/*.pt
+plots/
+vislogs/
+figures/
+logs/*/
+!logs/TCI_final/
